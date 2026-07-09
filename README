@@ -1,0 +1,57 @@
+  _  ===      B____     _e_           
+ ( `\( )     | __  |e__| -_|___m_ __o      
+  `> /~\ _*  | __ -| -_|___|     | . |     
+  (_/ /\/    |_____|___|   |_|_|_|___|                         
+    \ \       nflatrea@mailo.com                            
+    `./       meshguard :: A wireguard client routed by Iroh [^1]
+              README.txt
+
+You dial a VPN peer by its NodeId :: no server, no static IPs, no port forwarding:
+
+    $ ./meshguard connect 23ryys7pgvjrr57pcrvyivdrhvqyykg2tv3leou5grm66xfd7zzq
+
+meshguard uses CloudFlare's boringtun [^2] framework but sends the encrypted
+packets as iroh datagrams instead of a UDP socket. 
+
+iroh finds the peer through its discovery service (n0's DNS/pkarr resolver by default, or the mainline
+DHT), hole-punches a direct path when it can, and relays otherwise. 
+
+A meshguard node's entire identity is a single ed25519 seed. 
+
+From it we derive:
+
+seed ____ NodeId
+\________ wg static keypair via ed25519 -> x25519 conversion
+ \_______ A deteministic overlay IP (10.X.X.X)
+
+Because a peer's WireGuard public key is derivable from its NodeId alone,
+meshguard connect <NodeId> needs no key exchange. 
+
+:: QUICKSTART
+
+    $ cargo run -- id         
+    $ cargo run -- selftest   
+    
+selftest spins up two independent identities, completes a real Noise_IKpsk2
+handshake over an in-memory transport, and verifies an encrypted IP packet makes
+it across intact.
+
+:: INSTALL
+
+needs Rust ≥ 1.85, root, and the full feature
+
+    $ cargo build --release --features full
+    $ sudo ./target/release/meshguard serve
+
+on another machine:
+
+    $ sudo ./target/release/meshguard connect <NodeId>
+
+then: ping 10.x.y.z 
+
+:: LICENSE
+
+BSD-3-Clause. WireGuard is a registered trademark of Jason A. Donenfeld.
+
+[^1](https://github.com/n0-computer/iroh)
+[^2](https://github.com/cloudflare/boringtun)
