@@ -17,7 +17,12 @@ fn usage() -> ! {
          meshguard id\n  \
          meshguard selftest\n  \
          meshguard connect <NodeId> [--iface <name>] [--mtu <n>]\n  \
-         meshguard serve [--iface <name>] [--mtu <n>]\n",
+         meshguard serve [--iface <name>] [--mtu <n>]\n  \
+  \
+Environment variables:\n  \
+  MESHGUARD_EXPOSE_SERVICES=host_port:vpn_port[,...]  # Expose local services\n  \
+  MESHGUARD_ALLOWED_IPS=cidr[,...]                   # Additional allowed IPs\n  \
+  MESHGUARD_ENABLE_NAT=true|false                    # Enable NAT (default: true)\n",
         env!("CARGO_PKG_VERSION")
     );
     std::process::exit(2);
@@ -108,7 +113,20 @@ async fn connect(node_id: String, iface: String, mtu: u16) -> anyhow::Result<()>
     let transport = IrohTransport::dial(&ep, peer).await?;
     println!("Connected. Bringing up {iface} ({}).", id.overlay_ip());
 
+    // Load WireGuard configuration from environment variables
+    let wg_config = meshguard::wg_config::WgConfig::from_env();
+    
     let io = meshguard::tun::setup(&iface, id.overlay_ip(), mtu).await?;
+    
+    // Apply WireGuard configuration (firewall rules, NAT, service exposure)
+    if let Err(e) = wg_config.apply(&iface, id.overlay_ip()) {
+        eprintln!("Warning: Failed to apply WireGuard configuration: {}", e);
+    } else {
+        println!("WireGuard configuration applied successfully");
+        if !wg_config.expose_services.is_empty() {
+            println!("Exposing services: {:?}", wg_config.expose_services);
+        }
+    }
     let tunn = Arc::new(Mutex::new(meshguard::tunnel::build_tunn(
         &id, &peer_key, Some(25),
     )?));
@@ -133,8 +151,21 @@ async fn serve(iface: String, mtu: u16) -> anyhow::Result<()> {
     println!("Serving as {}", id.node_id_string());
     println!("Peers connect with:  meshguard connect {}", id.node_id_string());
 
+    // Load WireGuard configuration from environment variables
+    let wg_config = meshguard::wg_config::WgConfig::from_env();
+    
     let io: Arc<dyn meshguard::io::PacketIo> =
         Arc::new(meshguard::tun::setup(&iface, id.overlay_ip(), mtu).await?);
+    
+    // Apply WireGuard configuration (firewall rules, NAT, service exposure)
+    if let Err(e) = wg_config.apply(&iface, id.overlay_ip()) {
+        eprintln!("Warning: Failed to apply WireGuard configuration: {}", e);
+    } else {
+        println!("WireGuard configuration applied successfully");
+        if !wg_config.expose_services.is_empty() {
+            println!("Exposing services: {:?}", wg_config.expose_services);
+        }
+    }
 
     while let Some(incoming) = ep.accept().await {
         let conn = match incoming.await {

@@ -8,6 +8,7 @@ pub mod identity;
 pub mod io;
 pub mod transport;
 pub mod tunnel;
+pub mod wg_config;
 
 #[cfg(feature = "tun")]
 pub mod tun;

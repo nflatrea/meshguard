@@ -6,7 +6,91 @@
 
 use crate::io::ChannelIo;
 use std::net::Ipv4Addr;
+use std::process::Command;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// Configure firewall and NAT rules to allow VPN traffic and expose services
+fn configure_network_rules(iface: &str, overlay_ip: Ipv4Addr) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // Allow all traffic through the tunnel interface
+        let _ = Command::new("iptables")
+            .arg("-A")
+            .arg("INPUT")
+            .arg("-i")
+            .arg(iface)
+            .arg("-j")
+            .arg("ACCEPT")
+            .status();
+        
+        let _ = Command::new("iptables")
+            .arg("-A")
+            .arg("OUTPUT")
+            .arg("-o")
+            .arg(iface)
+            .arg("-j")
+            .arg("ACCEPT")
+            .status();
+        
+        let _ = Command::new("iptables")
+            .arg("-A")
+            .arg("FORWARD")
+            .arg("-i")
+            .arg(iface)
+            .arg("-j")
+            .arg("ACCEPT")
+            .status();
+        
+        let _ = Command::new("iptables")
+            .arg("-A")
+            .arg("FORWARD")
+            .arg("-o")
+            .arg(iface)
+            .arg("-j")
+            .arg("ACCEPT")
+            .status();
+        
+        // Enable NAT for services (masquerade traffic going through the tunnel)
+        let _ = Command::new("iptables")
+            .arg("-t")
+            .arg("nat")
+            .arg("-A")
+            .arg("POSTROUTING")
+            .arg("-o")
+            .arg(iface)
+            .arg("-j")
+            .arg("MASQUERADE")
+            .status();
+        
+        // Check if there are services to expose via environment variables
+        if let Ok(services) = std::env::var("MESHGUARD_EXPOSE_SERVICES") {
+            for service in services.split(',') {
+                let parts: Vec<&str> = service.trim().split(':').collect();
+                if parts.len() == 2 {
+                    if let (Ok(host_port), Ok(vpn_port)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                        // Forward host port to VPN interface
+                        let _ = Command::new("iptables")
+                            .arg("-t")
+                            .arg("nat")
+                            .arg("-A")
+                            .arg("PREROUTING")
+                            .arg("-p")
+                            .arg("tcp")
+                            .arg("--dport")
+                            .arg(host_port.to_string())
+                            .arg("-j")
+                            .arg("DNAT")
+                            .arg("--to-destination")
+                            .arg(format!("{}:{}", overlay_ip, vpn_port))
+                            .status();
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
 
 /// Create and bring up a TUN interface, returning the engine-side [`ChannelIo`].
 ///
@@ -30,6 +114,11 @@ pub async fn setup(name: &str, addr: Ipv4Addr, mtu: u16) -> anyhow::Result<Chann
 
     let dev = tun::create_as_async(&config)?;
     let (mut reader, mut writer) = tokio::io::split(dev);
+
+    // Configure firewall rules to allow VPN traffic
+    if let Err(e) = configure_network_rules(name, addr) {
+        eprintln!("Warning: Failed to configure network rules: {}", e);
+    }
 
     let (io, mut app) = ChannelIo::pair();
 

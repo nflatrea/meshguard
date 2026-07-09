@@ -15,6 +15,7 @@ use crate::io::Transport;
 use async_trait::async_trait;
 use bytes::Bytes;
 use iroh::{Endpoint, NodeId, SecretKey};
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 /// ALPN identifying the meshguard protocol during the iroh/QUIC handshake.
 pub const ALPN: &[u8] = b"meshguard/wg/0";
@@ -37,16 +38,33 @@ pub const ALPN: &[u8] = b"meshguard/wg/0";
 ///     .discovery(Box::new(dht))   // iroh 0.35: pass a Box<dyn Discovery>
 ///     .bind().await?;
 /// ```
+/// Build an iroh endpoint from our identity (binds to random port).
 pub async fn make_endpoint(id: &Identity) -> anyhow::Result<Endpoint> {
+    make_endpoint_with_port(id, None).await
+}
+
+/// Build an iroh endpoint from our identity, optionally binding to a specific port.
+pub async fn make_endpoint_with_port(
+    id: &Identity,
+    port: Option<u16>,
+) -> anyhow::Result<Endpoint> {
     let secret = SecretKey::from_bytes(&id.seed());
-    let ep = Endpoint::builder()
+    let mut builder = Endpoint::builder()
         .secret_key(secret)
         .alpns(vec![ALPN.to_vec()])
-        .discovery_n0()
-        .bind()
-        .await?;
+        .discovery_n0();
+    
+    // If a specific port is requested, bind to it
+    if let Some(p) = port {
+        let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, p);
+        builder = builder.bind_addr_v4(bind_addr);
+    }
+    
+    let ep = builder.bind().await?;
     Ok(ep)
 }
+
+
 
 /// Parse a NodeId string ("23ryys7p...") into an iroh NodeId.
 pub fn parse_node_id(s: &str) -> anyhow::Result<NodeId> {
